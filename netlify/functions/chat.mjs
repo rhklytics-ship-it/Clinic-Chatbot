@@ -139,7 +139,10 @@ function cleanMessages(input) {
 const RETRY_STATUS = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+let lastProblem = null;   // why the last call failed, shown when it is a setup problem
+
 async function callClaude(apiKey, body) {
+  lastProblem = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     let res;
     try {
@@ -156,6 +159,9 @@ async function callClaude(apiKey, body) {
     if (res.ok) return res.json();
     const detail = await res.text().catch(() => "");
     console.error(`AI API error ${res.status} (attempt ${attempt})`, detail.slice(0, 500));
+    let info = {};
+    try { info = JSON.parse(detail).error || {}; } catch {}
+    lastProblem = { status: res.status, type: info.type || "", message: String(info.message || "").slice(0, 160) };
     if (!RETRY_STATUS.has(res.status) || attempt === 3) return null;
     const wait = Math.min(Number(res.headers.get("retry-after")) * 1000 || 700 * attempt, 2500);
     await sleep(wait);
@@ -185,7 +191,15 @@ export default async (req) => {
         model: MODEL, max_tokens: 500, system, messages,
         ...(round < MAX_TOOL_ROUNDS ? { tools: toolList } : {}),
       });
-      if (!data) return json(502, { error: "The assistant is busy. Please try again in a moment." });
+      if (!data) {
+        // Setup problems (key, credit, model, request) are shown so the owner can fix them.
+        // Anthropic's error text never contains the key itself.
+        const p = lastProblem;
+        if (p && [400, 401, 403, 404].includes(p.status)) {
+          return json(502, { error: `The assistant isn't set up correctly (error ${p.status}${p.type ? ": " + p.type : ""}${p.message ? ", " + p.message : ""}).` });
+        }
+        return json(502, { error: "The assistant is busy. Please try again in a moment." });
+      }
       const uses = (data.content || []).filter(c => c.type === "tool_use");
       if (data.stop_reason !== "tool_use" || !uses.length) {
         const reply = (data.content || []).filter(c => c.type === "text").map(c => c.text).join("\n").trim();
