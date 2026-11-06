@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Clinic appointments | RHKLytics</title>
+<style>
+  :root { --ink: #1d2430; --muted: #5d6673; --line: #e4e7ea; --bg: #f6f7f7; --brand: #0F7C78; --bad: #9B1C1C; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { width: min(1000px, 100% - 32px); margin: 0 auto; padding: 28px 0 60px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  p.sub { margin: 0 0 22px; color: var(--muted); }
+  .panel { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 18px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  input, select { font: inherit; color: var(--ink); border: 1px solid #cfd5da; border-radius: 10px; padding: 9px 11px; background: #fff; min-width: 0; }
+  button { font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 10px 16px; background: var(--brand); color: #fff; cursor: pointer; }
+  button.ghost { background: #fff; color: var(--brand); border: 1px solid var(--brand); }
+  button.danger { background: #fff; color: var(--bad); border: 1px solid #e7b9b9; padding: 6px 12px; }
+  button:disabled { opacity: .5; cursor: default; }
+  :focus-visible { outline: 3px solid #F4B33E; outline-offset: 2px; }
+  .msg { min-height: 1.4em; margin: 10px 0 0; font-size: 14px; }
+  .msg.err { color: var(--bad); }
+  .day { display: flex; align-items: center; gap: 8px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  tr.cancelled td { color: #9aa1aa; text-decoration: line-through; }
+  tr.cancelled td:last-child { text-decoration: none; }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #E3F2F0; color: #0A5A57; }
+  .tag.owner { background: #FFF3D6; color: #6B4A00; }
+  .empty { color: var(--muted); padding: 18px 4px; }
+  [hidden] { display: none !important; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Clinic appointments</h1>
+  <p class="sub">See each day's appointments by doctor, cancel them, add phone or walk-in appointments, and download Excel. The assistant only offers times that are free here.</p>
+
+  <form class="panel" id="login">
+    <div class="row">
+      <label>Password<input type="password" name="key" autocomplete="current-password" required></label>
+      <button type="submit">Open bookings</button>
+    </div>
+    <p class="msg err" id="loginMsg" role="alert"></p>
+  </form>
+
+  <div id="app" hidden>
+    <div class="panel">
+      <div class="row">
+        <label>Clinic<select id="biz"></select></label>
+        <div class="day">
+          <button type="button" class="ghost" id="prev" aria-label="Previous day">&larr;</button>
+          <label>Date<input type="date" id="date"></label>
+          <button type="button" class="ghost" id="next" aria-label="Next day">&rarr;</button>
+        </div>
+        <button type="button" class="ghost" id="refresh">Refresh</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Time</th><th>Service</th><th>Patient</th><th>Mobile</th><th id="staffHead">Staff</th><th>Ref</th><th>From</th><th><span class="sr">Action</span></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="empty" hidden>No appointments on this day.</p>
+      <p class="msg" id="listMsg" role="status"></p>
+    </div>
+
+    <form class="panel" id="export">
+      <b>Download appointments as Excel</b>
+      <div class="row" style="margin-top:12px">
+        <label>From<input type="date" id="exFrom" required></label>
+        <label>To<input type="date" id="exTo" required></label>
+        <button type="button" class="ghost" data-range="week">This week</button>
+        <button type="button" class="ghost" data-range="month">This month</button>
+        <button type="submit">Download Excel</button>
+      </div>
+      <p class="msg" id="exMsg" role="status"></p>
+    </form>
+
+    <form class="panel" id="add">
+      <b>Add a phone or walk-in appointment</b>
+      <div class="row" style="margin-top:12px">
+        <label>Service<select name="service" id="svc"></select></label>
+        <label>Time<input type="time" name="time" step="1800" required></label>
+        <label>Name<input name="name" required maxlength="60"></label>
+        <label>Mobile<input name="phone" type="tel" required maxlength="20"></label>
+        <button type="submit">Add appointment</button>
+      </div>
+      <p class="msg" id="addMsg" role="status"></p>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  let key = "";
+  let info = [];
+  try { key = sessionStorage.getItem("rk-admin") || ""; } catch {}
+
+  async function api(path, opts = {}) {
+    const res = await fetch(path, { ...opts, headers: { "content-type": "application/json", "x-admin-key": key, ...(opts.headers || {}) } });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data };
+  }
+  const biz = () => info.find(b => b.key === $("biz").value);
+  function shiftDate(n) {
+    const d = new Date($("date").value + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n);
+    $("date").value = d.toISOString().slice(0, 10); load();
+  }
+  function niceTime(t) { const [h, m] = t.split(":").map(Number); return (h % 12 || 12) + ":" + String(m).padStart(2, "0") + (h < 12 ? " am" : " pm"); }
+
+  async function start() {
+    const r = await api("/api/admin?list=businesses");
+    if (!r.ok) {
+      $("loginMsg").textContent = r.data.error || "Could not open bookings.";
+      try { sessionStorage.removeItem("rk-admin"); } catch {}
+      return;
+    }
+    try { sessionStorage.setItem("rk-admin", key); } catch {}
+    info = r.data.businesses;
+    $("biz").innerHTML = "";
+    info.forEach(b => { const o = document.createElement("option"); o.value = b.key; o.textContent = b.name; $("biz").appendChild(o); });
+    $("login").hidden = true; $("app").hidden = false;
+    pickBiz();
+  }
+  const addD = (d, n) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+  function setRange(kind) {
+    const t = biz().today;
+    if (kind === "month") { $("exFrom").value = t.slice(0, 8) + "01"; const e = new Date(Date.UTC(+t.slice(0, 4), +t.slice(5, 7), 0)); $("exTo").value = e.toISOString().slice(0, 10); }
+    else { $("exFrom").value = t; $("exTo").value = addD(t, 6); }
+  }
+  function loadScript(src) {
+    return new Promise((ok, fail) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = fail; document.head.appendChild(s); });
+  }
+  async function downloadExcel(e) {
+    e.preventDefault();
+    const b = biz(), from = $("exFrom").value, to = $("exTo").value;
+    $("exMsg").className = "msg"; $("exMsg").textContent = "Preparing...";
+    try {
+      if (!window.ExcelJS) await loadScript("/vendor/exceljs-4.4.0.min.js");
+      if (!window.buildBookingsWorkbook) await loadScript("/bookings-export.js");
+      const r = await api(`/api/admin?business=${encodeURIComponent(b.key)}&from=${from}&to=${to}`);
+      if (!r.ok) throw new Error(r.data.error || "Could not load bookings.");
+      const wb = window.buildBookingsWorkbook(window.ExcelJS, { businessName: b.name, staffLabel: b.staffLabel, from, to, bookings: r.data.bookings });
+      const buf = await wb.xlsx.writeBuffer();
+      const url = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      const a = document.createElement("a"); a.href = url; a.download = `${b.key}-bookings-${from}-to-${to}.xlsx`;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+      $("exMsg").textContent = `Downloaded ${r.data.bookings.length} bookings.`;
+    } catch (err) {
+      $("exMsg").className = "msg err"; $("exMsg").textContent = err.message || "Could not create the file.";
+    }
+  }
+
+  function pickBiz() {
+    const b = biz();
+    setRange("week");
+    $("date").value = b.today;
+    $("staffHead").textContent = b.staffLabel;
+    $("svc").innerHTML = "";
+    b.services.forEach(s => { const o = document.createElement("option"); o.textContent = s; $("svc").appendChild(o); });
+    load();
+  }
+
+  async function load() {
+    $("listMsg").textContent = "Loading...";
+    const r = await api(`/api/admin?business=${encodeURIComponent($("biz").value)}&date=${$("date").value}`);
+    $("listMsg").textContent = r.ok ? "" : (r.data.error || "Could not load bookings.");
+    const rows = $("rows"); rows.innerHTML = "";
+    const list = r.ok ? r.data.bookings : [];
+    $("empty").hidden = list.length > 0;
+    list.forEach(bk => {
+      const tr = document.createElement("tr");
+      if (bk.status === "cancelled") tr.className = "cancelled";
+      const cells = [niceTime(bk.time) + " (" + bk.minutes + " min)", bk.service, bk.name, bk.phone, (bk.staffName || (biz().staffLabel + " " + (bk.staff + 1))), bk.id];
+      cells.forEach(c => { const td = document.createElement("td"); td.textContent = c; tr.appendChild(td); });
+      const src = document.createElement("td");
+      const tag = document.createElement("span"); tag.className = "tag" + (bk.source === "owner" ? " owner" : "");
+      tag.textContent = bk.status === "cancelled" ? (bk.cancelledBy === "patient" ? "Cancelled by patient" : "Cancelled") : (bk.source === "owner" ? "Added by clinic" : "Online");
+      src.appendChild(tag); tr.appendChild(src);
+      const act = document.createElement("td");
+      if (bk.status !== "cancelled") {
+        const b = document.createElement("button"); b.className = "danger"; b.type = "button"; b.textContent = "Cancel";
+        b.setAttribute("aria-label", "Cancel booking " + bk.id + " for " + bk.name);
+        b.addEventListener("click", async () => {
+          if (!confirm(`Cancel ${bk.name}'s ${bk.service} at ${niceTime(bk.time)}? The time becomes free online.`)) return;
+          b.disabled = true;
+          const r2 = await api("/api/admin", { method: "POST", body: JSON.stringify({ action: "cancel", business: $("biz").value, date: $("date").value, id: bk.id }) });
+          $("listMsg").textContent = r2.ok ? "Booking cancelled." : (r2.data.error || "Could not cancel.");
+          load();
+        });
+        act.appendChild(b);
+      }
+      tr.appendChild(act);
+      rows.appendChild(tr);
+    });
+  }
+
+  $("login").addEventListener("submit", (e) => { e.preventDefault(); key = e.target.key.value; $("loginMsg").textContent = ""; start(); });
+  $("biz").addEventListener("change", pickBiz);
+  $("export").addEventListener("submit", downloadExcel);
+  document.querySelectorAll("[data-range]").forEach(btn => btn.addEventListener("click", () => setRange(btn.dataset.range)));
+  $("date").addEventListener("change", load);
+  $("prev").addEventListener("click", () => shiftDate(-1));
+  $("next").addEventListener("click", () => shiftDate(1));
+  $("refresh").addEventListener("click", load);
+  $("add").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const r = await api("/api/admin", { method: "POST", body: JSON.stringify({
+      action: "add", business: $("biz").value, date: $("date").value,
+      service: f.service.value, time: f.time.value, name: f.name.value, phone: f.phone.value }) });
+    $("addMsg").textContent = r.ok ? `Added. Ref ${r.data.booking.id}.` : (r.data.error || "Could not add booking.");
+    $("addMsg").className = "msg" + (r.ok ? "" : " err");
+    if (r.ok) { f.reset(); load(); }
+  });
+  if (key) start();
+})();
+</script>
+</body>
+</html>
