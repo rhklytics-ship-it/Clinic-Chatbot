@@ -134,17 +134,33 @@ function cleanMessages(input) {
   return recent;
 }
 
+// Calls Claude, retrying briefly on temporary errors (rate limit, overloaded, network),
+// so a passing hiccup doesn't reach the visitor as "busy".
+const RETRY_STATUS = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
 async function callClaude(apiKey, body) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    console.error("AI API error", res.status, await res.text());
-    return null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    let res;
+    try {
+      res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      console.error(`AI API network error (attempt ${attempt})`, err?.message || err);
+      if (attempt < 3) { await sleep(600 * attempt); continue; }
+      return null;
+    }
+    if (res.ok) return res.json();
+    const detail = await res.text().catch(() => "");
+    console.error(`AI API error ${res.status} (attempt ${attempt})`, detail.slice(0, 500));
+    if (!RETRY_STATUS.has(res.status) || attempt === 3) return null;
+    const wait = Math.min(Number(res.headers.get("retry-after")) * 1000 || 700 * attempt, 2500);
+    await sleep(wait);
   }
-  return res.json();
+  return null;
 }
 
 export default async (req) => {
